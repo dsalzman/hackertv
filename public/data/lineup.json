@@ -1,0 +1,161 @@
+{
+ "estimated": false,
+ "channels": [
+  {
+   "num": 2,
+   "id": "prime",
+   "name": "HN PRIME",
+   "tagline": "The all-time most recommended videos on Hacker News",
+   "count": 395,
+   "total": 1115558
+  },
+  {
+   "num": 3,
+   "id": "software",
+   "name": "DEVTV",
+   "tagline": "Software engineering & languages",
+   "count": 674,
+   "total": 1969635
+  },
+  {
+   "num": 4,
+   "id": "systems-security",
+   "name": "SYSNET",
+   "tagline": "Systems, networks & security",
+   "count": 416,
+   "total": 990804
+  },
+  {
+   "num": 5,
+   "id": "ai-data",
+   "name": "NEURAL",
+   "tagline": "AI, machine learning & data",
+   "count": 302,
+   "total": 546296
+  },
+  {
+   "num": 6,
+   "id": "math-theory",
+   "name": "PROOF",
+   "tagline": "Mathematics & theoretical CS",
+   "count": 182,
+   "total": 294944
+  },
+  {
+   "num": 7,
+   "id": "hardware",
+   "name": "SOLDER",
+   "tagline": "Hardware & electronics",
+   "count": 302,
+   "total": 471392
+  },
+  {
+   "num": 8,
+   "id": "computing-history-culture",
+   "name": "RETRO",
+   "tagline": "Computing history & culture",
+   "count": 412,
+   "total": 710823
+  },
+  {
+   "num": 9,
+   "id": "design-graphics-media",
+   "name": "PIXEL",
+   "tagline": "Design, graphics & visual media",
+   "count": 184,
+   "total": 229120
+  },
+  {
+   "num": 10,
+   "id": "business-economics",
+   "name": "YC-SPAN",
+   "tagline": "Business, startups & economics",
+   "count": 257,
+   "total": 478239
+  },
+  {
+   "num": 11,
+   "id": "politics-history-society",
+   "name": "HISTORY",
+   "tagline": "Politics, history & society",
+   "count": 390,
+   "total": 681800
+  },
+  {
+   "num": 12,
+   "id": "physics-space",
+   "name": "ORBIT",
+   "tagline": "Physics, space & chemistry",
+   "count": 363,
+   "total": 517777
+  },
+  {
+   "num": 13,
+   "id": "life-sciences-health",
+   "name": "BIO",
+   "tagline": "Life sciences, mind & health",
+   "count": 348,
+   "total": 731558
+  },
+  {
+   "num": 14,
+   "id": "earth-energy-environment",
+   "name": "TERRA",
+   "tagline": "Earth, energy & environment",
+   "count": 218,
+   "total": 398035
+  },
+  {
+   "num": 15,
+   "id": "engineering-making",
+   "name": "MAKER",
+   "tagline": "Engineering, transport & making",
+   "count": 497,
+   "total": 482916
+  },
+  {
+   "num": 16,
+   "id": "games",
+   "name": "PLAYER1",
+   "tagline": "Games & game development",
+   "count": 202,
+   "total": 457304
+  },
+  {
+   "num": 17,
+   "id": "arts-entertainment",
+   "name": "MARQUEE",
+   "tagline": "Arts, comedy, music & film",
+   "count": 842,
+   "total": 471954
+  },
+  {
+   "num": 18,
+   "id": "ideas-education",
+   "name": "IDEAS",
+   "tagline": "Ideas, learning & language",
+   "count": 263,
+   "total": 471407
+  },
+  {
+   "num": 24,
+   "id": "music",
+   "name": "HN MUSIC",
+   "tagline": "Music videos and performances HN keeps sharing",
+   "count": 178,
+   "total": 85232
+  },
+  {
+   "num": 99,
+   "id": "latenight",
+   "name": "LATE NIGHT",
+   "tagline": "Long lectures & talks. On air 11pm-5am your time",
+   "hours": [
+    23,
+    5
+   ],
+   "count": 1138,
+   "total": 5684377
+  }
+ ]
+}

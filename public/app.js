@@ -1,0 +1,457 @@
+import { slotAt, nextSlot, slotsBetween, onAir } from "./schedule.js";
+
+const $ = (id) => document.getElementById(id);
+const FILTERS = [
+  { id: "off", name: "CLEAN" },
+  { id: "crt", name: "CRT" },
+  { id: "vhs", name: "VHS" },
+  { id: "bw", name: "B&W 1962" },
+];
+
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+const state = {
+  lineup: null,
+  data: new Map(),          // channel id -> channel json
+  idx: 0,                   // index into lineup.channels
+  lastIdx: 0,
+  powered: false,
+  muted: store.get("hntv.muted", "0") === "1",
+  filter: Math.max(0, FILTERS.findIndex((f) => f.id === store.get("hntv.filter", "off"))),
+  player: null,
+  playerReady: null,
+  loadedVid: null,
+  slot: null,
+  failed: false,            // current video errored (deleted / not embeddable)
+  clockOffset: 0,           // server time - local time (s)
+  digits: "",
+  digitTimer: 0,
+};
+
+const now = () => Date.now() / 1000 + state.clockOffset;
+const chMeta = () => state.lineup.channels[state.idx];
+
+// ---------- time sync: trust the server's Date header over the local clock ----------
+async function syncClock() {
+  try {
+    const t0 = Date.now();
+    const r = await fetch(location.pathname, { method: "HEAD", cache: "no-store" });
+    const d = Date.parse(r.headers.get("date"));
+    if (!isNaN(d)) {
+      const rtt = Date.now() - t0;
+      const off = (d + 500 + rtt / 2 - Date.now()) / 1000; // Date header has 1s resolution
+      if (Math.abs(off) > 2) state.clockOffset = off;     // ignore sub-resolution noise
+    }
+  } catch {}
+}
+
+// ---------- data ----------
+async function loadChannel(meta) {
+  if (state.data.has(meta.id)) return state.data.get(meta.id);
+  const r = await fetch(`data/ch/${meta.id}.json`);
+  const ch = await r.json();
+  state.data.set(meta.id, ch);
+  return ch;
+}
+
+// ---------- YouTube player ----------
+function ytReady() {
+  return new Promise((resolve) => {
+    if (window.YT && window.YT.Player && window.YT.loaded) return resolve();
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { prev && prev(); resolve(); };
+  });
+}
+
+function createPlayer() {
+  state.playerReady = ytReady().then(() => new Promise((resolve) => {
+    state.player = new YT.Player("player", {
+      host: "https://www.youtube-nocookie.com",
+      width: "100%", height: "100%",
+      playerVars: {
+        controls: 0, disablekb: 1, modestbranding: 1, rel: 0, iv_load_policy: 3,
+        playsinline: 1, fs: 0, cc_load_policy: 0, origin: location.origin,
+      },
+      events: {
+        onReady: () => resolve(state.player),
+        onError: () => { state.failed = true; render(); },
+        onStateChange: () => render(),
+      },
+    });
+  }));
+}
+
+// ---------- static noise (video + audio) ----------
+const noise = (() => {
+  const c = $("static"), g = c.getContext("2d");
+  const img = g.createImageData(c.width, c.height);
+  let raf = 0, until = 0, actx = null, buf = null;
+  function frame() {
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = (Math.random() * 255) | 0;
+      d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    if (performance.now() < until) raf = requestAnimationFrame(frame);
+    else { c.classList.remove("on"); raf = 0; }
+  }
+  function sound(ms) {
+    if (state.muted) return;
+    try {
+      actx ??= new AudioContext();
+      if (!buf) {
+        buf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+        const ch = buf.getChannelData(0);
+        for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+      }
+      const src = actx.createBufferSource(); src.buffer = buf;
+      const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 3000; bp.Q.value = 0.4;
+      const gain = actx.createGain();
+      gain.gain.setValueAtTime(0.12, actx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + ms / 1000);
+      src.connect(bp).connect(gain).connect(actx.destination);
+      src.start(); src.stop(actx.currentTime + ms / 1000);
+    } catch {}
+  }
+  return {
+    burst(ms = 450, withSound = true) {
+      until = Math.max(until, performance.now() + ms);
+      c.classList.add("on");
+      if (withSound) sound(ms);
+      if (!raf) raf = requestAnimationFrame(frame);
+    },
+  };
+})();
+
+// ---------- UI helpers ----------
+const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const fmtDur = (s) => {
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+};
+const pad2 = (n) => String(n).padStart(2, "0");
+
+let osdTimer = 0;
+function flashOSD(text, ms = 2500) {
+  const el = $("osdCh");
+  el.textContent = text;
+  el.classList.add("on");
+  clearTimeout(osdTimer);
+  osdTimer = setTimeout(() => el.classList.remove("on"), ms);
+}
+
+let ltTimer = 0;
+function showLowerThird(meta, slot) {
+  const v = slot.video;
+  $("ltNum").textContent = meta.num;
+  $("ltName").textContent = meta.name;
+  $("ltTitle").textContent = v.t;
+  $("ltQuote").textContent = v.q ? `“${v.q}” — HN${v.y ? ", " + v.y : ""}` : v.c;
+  const el = $("lowerthird");
+  el.hidden = false;
+  requestAnimationFrame(() => el.classList.add("on"));
+  clearTimeout(ltTimer);
+  ltTimer = setTimeout(() => { el.classList.remove("on"); setTimeout(() => (el.hidden = true), 600); }, 7000);
+}
+
+function setStandby(on, title = "PLEASE STAND BY", sub = "", bars = false) {
+  const el = $("standby");
+  el.hidden = !on;
+  el.classList.toggle("with-bars", bars);
+  $("standbyTitle").textContent = title;
+  $("standbySub").textContent = sub;
+}
+
+function applyFilter() {
+  const f = FILTERS[state.filter];
+  $("screen").className = `screen filter-${f.id}`;
+  $("fxName").textContent = `PICTURE: ${f.name}`;
+  $("knobFx").style.setProperty("--rot", `${state.filter * 70 - 105}deg`);
+  store.set("hntv.filter", f.id);
+}
+
+function applyMute() {
+  $("osdMute").hidden = !state.muted || !state.powered;
+  store.set("hntv.muted", state.muted ? "1" : "0");
+  if (!state.player?.mute) return;
+  state.muted ? state.player.mute() : state.player.unMute();
+}
+
+// ---------- tuning ----------
+async function tune(idx, { quiet = false } = {}) {
+  const n = state.lineup.channels.length;
+  idx = ((idx % n) + n) % n;
+  if (idx !== state.idx) state.lastIdx = state.idx;
+  state.idx = idx;
+  store.set("hntv.ch", chMeta().id);
+  const meta = chMeta();
+  $("led").textContent = pad2(meta.num);
+  $("knobCh").style.setProperty("--rot", `${(idx / n) * 300 - 150}deg`);
+  if (!state.powered) return;
+  if (!quiet) noise.burst(500);
+  flashOSD(`${pad2(meta.num)} ${meta.name}`);
+  state.loadedVid = null; // force reload of whatever is airing
+  state.failed = false;
+  await loadChannel(meta);
+  if (state.idx === idx) await sync(true);
+}
+
+/** Make the screen match the schedule. Called on tune and every second. */
+async function sync(fromTune = false) {
+  if (!state.powered) return;
+  const meta = chMeta();
+  const ch = state.data.get(meta.id);
+  if (!ch) return;
+  const player = await state.playerReady;
+
+  if (!onAir(meta)) {
+    if (state.loadedVid !== "offair") {
+      player.stopVideo();
+      state.loadedVid = "offair";
+      state.slot = null;
+      setStandby(true, `${meta.name} IS OFF THE AIR`, `Broadcasting nightly ${meta.hours[0] % 12 || 12} PM – ${meta.hours[1]} AM your time`, true);
+    }
+    return render();
+  }
+  if (state.loadedVid === "offair") state.loadedVid = null;
+
+  const t = now();
+  const slot = slotAt(ch, t);
+  const offset = t - slot.start;
+  state.slot = slot;
+
+  if (slot.video.v !== state.loadedVid) {
+    if (!fromTune) noise.burst(350, false); // program change: brief interference
+    state.loadedVid = slot.video.v;
+    state.failed = false;
+    setStandby(false);
+    player.loadVideoById({ videoId: slot.video.v, startSeconds: offset });
+    applyMute();
+    showLowerThird(meta, slot);
+  } else if (!state.failed) {
+    const ps = player.getPlayerState?.();
+    if (ps === YT.PlayerState.PLAYING) {
+      const drift = player.getCurrentTime() - offset;
+      if (Math.abs(drift) > 5) player.seekTo(offset, true);
+    } else if (ps === YT.PlayerState.PAUSED || ps === YT.PlayerState.CUED) {
+      player.playVideo(); // it's live TV: no pausing
+    }
+  }
+  render();
+}
+
+// ---------- render info + standby ----------
+function render() {
+  const meta = state.lineup && chMeta();
+  if (!meta) return;
+  $("infoNum").textContent = pad2(meta.num);
+  $("infoCh").textContent = meta.name;
+  $("infoTag").textContent = meta.tagline;
+  const slot = state.slot;
+  $("now").hidden = !slot || !state.powered;
+  $("ytLink").hidden = !slot || !state.powered;
+  if (!slot || !state.powered) return;
+
+  const t = now(), v = slot.video;
+  const ch = state.data.get(meta.id);
+  const ps = state.player?.getPlayerState?.();
+
+  if (state.failed) setStandby(true, "SIGNAL LOST", `This program is unavailable. Next up at ${fmtTime(slot.end)}`);
+  else if (ps === YT.PlayerState.ENDED) setStandby(true, "PLEASE STAND BY", `Next program at ${fmtTime(slot.end)}`);
+  else if (state.loadedVid !== "offair") setStandby(false);
+
+  $("nowTitle").textContent = v.t;
+  $("nowMeta").textContent = `${v.c} · ${fmtTime(slot.start)} – ${fmtTime(slot.end)} · ${fmtDur(Math.max(0, slot.end - t))} left`;
+  $("progressBar").style.width = `${Math.min(100, ((t - slot.start) / v.d) * 100)}%`;
+  const q = $("nowQuote");
+  if (v.q) {
+    q.hidden = false;
+    q.innerHTML = "";
+    q.append(`“${v.q}”`);
+    const cite = document.createElement("a");
+    cite.href = `https://news.ycombinator.com/item?id=${v.h}`;
+    cite.target = "_blank"; cite.rel = "noopener";
+    cite.textContent = ` — HN comment${v.y ? ", " + v.y : ""}`;
+    q.append(cite);
+  } else q.hidden = true;
+  const nx = nextSlot(ch, slot);
+  $("nextLine").textContent = `${fmtTime(nx.start)}  ${nx.video.t}`;
+  $("ytLink").href = `https://www.youtube.com/watch?v=${v.v}&t=${Math.floor(t - slot.start)}s`;
+}
+
+// ---------- power ----------
+async function power(on = !state.powered) {
+  state.powered = on;
+  const tube = $("tube");
+  $("tv").classList.toggle("is-on", on);
+  if (on) {
+    $("poweroff").hidden = true;
+    tube.classList.remove("turning-off");
+    tube.classList.add("turning-on");
+    setTimeout(() => tube.classList.remove("turning-on"), 900);
+    applyMute();
+    await tune(state.idx, { quiet: true });
+    noise.burst(300);
+  } else {
+    tube.classList.add("turning-off");
+    state.player?.stopVideo?.();
+    state.loadedVid = null;
+    state.slot = null;
+    setStandby(false);
+    setTimeout(() => { if (!state.powered) { $("poweroff").hidden = false; tube.classList.remove("turning-off"); } }, 700);
+    $("osdMute").hidden = true;
+    render();
+  }
+}
+
+// ---------- guide ----------
+async function openGuide() {
+  const g = $("guide");
+  g.hidden = false;
+  const grid = $("guideGrid");
+  await Promise.all(state.lineup.channels.map(loadChannel));
+  const SPAN = 3 * 3600;
+  const t = now();
+  const t0 = Math.floor(t / 1800) * 1800;
+  const t1 = t0 + SPAN;
+  const pct = (x) => ((Math.max(t0, Math.min(t1, x)) - t0) / SPAN) * 100;
+
+  const frag = document.createDocumentFragment();
+  const head = document.createElement("div");
+  head.className = "g-row g-head";
+  head.innerHTML = `<div class="g-ch"></div><div class="g-track"></div>`;
+  for (let s = t0; s < t1; s += 1800) {
+    const c = document.createElement("span");
+    c.style.left = `${pct(s)}%`;
+    c.textContent = fmtTime(s);
+    head.lastChild.append(c);
+  }
+  const nowLine = document.createElement("i");
+  nowLine.className = "g-now";
+  nowLine.style.left = `${pct(t)}%`;
+  head.lastChild.append(nowLine);
+  frag.append(head);
+
+  state.lineup.channels.forEach((meta, i) => {
+    const ch = state.data.get(meta.id);
+    const row = document.createElement("div");
+    row.className = "g-row" + (i === state.idx ? " current" : "");
+    const label = document.createElement("button");
+    label.type = "button";
+    label.className = "g-ch";
+    label.innerHTML = `<b>${pad2(meta.num)}</b> <span></span>`;
+    label.lastChild.textContent = meta.name;
+    label.onclick = () => { closeGuide(); tune(i); };
+    const track = document.createElement("div");
+    track.className = "g-track";
+    if (!onAir(meta)) {
+      const b = document.createElement("div");
+      b.className = "g-prog offair";
+      b.style.left = "0"; b.style.width = "100%";
+      b.textContent = `Off the air · signs on at ${meta.hours[0] % 12 || 12} PM`;
+      track.append(b);
+    } else {
+      for (const s of slotsBetween(ch, t0, t1)) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "g-prog" + (s.start <= t && t < s.end ? " live" : "");
+        b.style.left = `${pct(s.start)}%`;
+        b.style.width = `${pct(s.end) - pct(s.start)}%`;
+        b.title = `${fmtTime(s.start)} ${s.video.t} (${s.video.c})`;
+        b.textContent = s.video.t;
+        b.onclick = () => { closeGuide(); tune(i); };
+        track.append(b);
+      }
+    }
+    row.append(label, track);
+    frag.append(row);
+  });
+  grid.replaceChildren(frag);
+  $("guideClock").textContent = new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  grid.querySelector(".current")?.scrollIntoView({ block: "center" });
+}
+function closeGuide() { $("guide").hidden = true; }
+const toggleGuide = () => ($("guide").hidden ? openGuide() : closeGuide());
+
+// ---------- input ----------
+function enterDigit(d) {
+  if (!state.powered) return;
+  state.digits = (state.digits + d).slice(-2);
+  flashOSD(state.digits.padEnd(2, "-"), 1500);
+  $("led").textContent = state.digits.padEnd(2, "-");
+  clearTimeout(state.digitTimer);
+  state.digitTimer = setTimeout(commitDigits, state.digits.length >= 2 ? 300 : 1300);
+}
+function commitDigits() {
+  clearTimeout(state.digitTimer);
+  const num = parseInt(state.digits, 10);
+  state.digits = "";
+  const i = state.lineup.channels.findIndex((c) => c.num === num);
+  if (i >= 0) tune(i);
+  else { flashOSD(`NO CH ${num}`, 1500); $("led").textContent = pad2(chMeta().num); }
+}
+
+const actions = {
+  chup: () => state.powered && tune(state.idx + 1),
+  chdown: () => state.powered && tune(state.idx - 1),
+  guide: () => toggleGuide(),
+  filter: () => { state.filter = (state.filter + 1) % FILTERS.length; applyFilter(); state.powered && flashOSD(FILTERS[state.filter].name, 1500); },
+  mute: () => { state.muted = !state.muted; applyMute(); },
+  power: () => power(),
+  info: () => state.powered && state.slot && showLowerThird(chMeta(), state.slot),
+};
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act],[data-key]");
+  if (!b) return;
+  if (b.dataset.act) actions[b.dataset.act]();
+  const k = b.dataset.key;
+  if (k === "enter") state.digits && commitDigits();
+  else if (k === "last") state.powered && tune(state.lastIdx);
+  else if (k) enterDigit(k);
+});
+$("powerCta").addEventListener("click", () => power(true));
+$("guideClose").addEventListener("click", closeGuide);
+$("guide").addEventListener("click", (e) => { if (e.target.id === "guide") closeGuide(); });
+
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === "Escape") return closeGuide();
+  if (/^[0-9]$/.test(k)) return enterDigit(k);
+  if (k === "Enter" && state.digits) return commitDigits();
+  const map = { ArrowUp: "chup", ArrowDown: "chdown", PageUp: "chup", PageDown: "chdown",
+                g: "guide", f: "filter", m: "mute", p: "power", i: "info" };
+  const act = map[k] || map[k.toLowerCase()];
+  if (act) { e.preventDefault(); actions[act](); }
+});
+
+// ---------- VHS date stamp ----------
+function tickVhsDate() {
+  const d = new Date(now() * 1000);
+  const mon = d.toLocaleString("en", { month: "short" }).toUpperCase();
+  $("vhsDate").textContent = `${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}${d.getHours() < 12 ? "AM" : "PM"}\n${mon} ${pad2(d.getDate())} ${d.getFullYear()}`;
+}
+
+// ---------- boot ----------
+(async function boot() {
+  syncClock();
+  state.lineup = await (await fetch("data/lineup.json")).json();
+  $("estNotice").hidden = !state.lineup.estimated;
+  const saved = store.get("hntv.ch", "prime");
+  state.idx = Math.max(0, state.lineup.channels.findIndex((c) => c.id === saved));
+  state.lastIdx = state.idx;
+  applyFilter();
+  await tune(state.idx);
+  loadChannel(chMeta());
+  createPlayer();
+  render();
+  setInterval(() => { sync(); tickVhsDate(); }, 1000);
+  setInterval(syncClock, 10 * 60 * 1000);
+  tickVhsDate();
+})();
