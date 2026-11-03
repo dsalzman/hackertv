@@ -21,6 +21,8 @@ const state = {
   lastIdx: 0,
   powered: false,
   muted: store.get("hntv.muted", "0") === "1",
+  captions: store.get("hntv.cc", "0") === "1",
+  ccAppliedFor: null,      // video id captions were last applied to
   filter: Math.max(0, FILTERS.findIndex((f) => f.id === store.get("hntv.filter", "off"))),
   player: null,
   playerReady: null,
@@ -119,12 +121,19 @@ function createPlayer() {
       width: "100%", height: "100%",
       playerVars: {
         controls: 0, disablekb: 1, modestbranding: 1, rel: 0, iv_load_policy: 3,
-        playsinline: 1, fs: 0, cc_load_policy: 0, origin: location.origin,
+        playsinline: 1, fs: 0, cc_load_policy: state.captions ? 1 : 0, cc_lang_pref: "en", origin: location.origin,
       },
       events: {
         onReady: () => resolve(state.player),
         onError: () => { state.failed = true; render(); },
-        onStateChange: () => render(),
+        onStateChange: (e) => {
+          // YouTube resets caption state per video, so re-apply ours once each program starts.
+          if (e.data === YT.PlayerState.PLAYING && state.ccAppliedFor !== state.loadedVid) {
+            state.ccAppliedFor = state.loadedVid;
+            applyCaptions();
+          }
+          render();
+        },
       },
     });
   }));
@@ -227,6 +236,38 @@ function applyMute() {
   store.set("hntv.muted", state.muted ? "1" : "0");
   if (!state.player?.mute) return;
   state.muted ? state.player.mute() : state.player.unMute();
+}
+
+// ---------- captions ----------
+function applyCaptions() {
+  const p = state.player;
+  if (!p?.loadModule) return;
+  try {
+    if (state.captions) {
+      p.loadModule("captions");
+      p.setOption("captions", "track", { languageCode: "en" });
+    } else {
+      p.setOption("captions", "track", {});
+      p.unloadModule("captions");
+    }
+  } catch {}
+}
+
+function toggleCaptions() {
+  state.captions = !state.captions;
+  store.set("hntv.cc", state.captions ? "1" : "0");
+  document.querySelectorAll('[data-act="captions"]').forEach((b) => b.classList.toggle("on", state.captions));
+  document.body.classList.toggle("cc-on", state.captions);
+  if (!state.powered) return;
+  applyCaptions();
+  flashOSD(state.captions ? "CC ON" : "CC OFF", 1500);
+  if (state.captions) {
+    setTimeout(() => {
+      let tracks;
+      try { tracks = state.player.getOption("captions", "tracklist"); } catch {}
+      if (state.captions && Array.isArray(tracks) && tracks.length === 0) flashOSD("NO CAPTIONS", 2000);
+    }, 1500);
+  }
 }
 
 // ---------- tuning ----------
@@ -568,6 +609,7 @@ const actions = {
   guide: () => toggleGuide(),
   filter: () => { state.filter = (state.filter + 1) % FILTERS.length; applyFilter(); state.powered && flashOSD(FILTERS[state.filter].name, 1500); },
   mute: () => { state.muted = !state.muted; applyMute(); },
+  captions: () => toggleCaptions(),
   power: () => power(),
   theater: () => setTheater(!state.theater),
   fullscreen: () => toggleFullscreen(),
@@ -598,7 +640,7 @@ document.addEventListener("keydown", (e) => {
   if (/^[0-9]$/.test(k)) return enterDigit(k);
   if (k === "Enter" && state.digits) return commitDigits();
   const map = { ArrowUp: "chup", ArrowDown: "chdown", PageUp: "chup", PageDown: "chdown",
-                g: "guide", f: "filter", m: "mute", p: "power", i: "info", t: "theater" };
+                g: "guide", f: "filter", m: "mute", p: "power", i: "info", t: "theater", c: "captions" };
   const act = map[k] || map[k.toLowerCase()];
   if (act) { e.preventDefault(); actions[act](); }
 });
@@ -622,6 +664,8 @@ function tickVhsDate() {
   state.idx = Math.max(0, state.lineup.channels.findIndex((c) => c.id === saved));
   state.lastIdx = state.idx;
   applyFilter();
+  document.querySelectorAll('[data-act="captions"]').forEach((b) => b.classList.toggle("on", state.captions));
+  document.body.classList.toggle("cc-on", state.captions);
   await tune(state.idx);
   loadChannel(chMeta());
   createPlayer();

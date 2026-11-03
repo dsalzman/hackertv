@@ -399,3 +399,8 @@ body.theater .hud.show { opacity: 1; transform: translate(-50%, 0); pointer-even
 .credits p { margin: 6px auto 0; max-width: 760px; line-height: 1.5; }
 .credits a { color: #b8a888; }
 .credits a:hover { color: var(--hn); }
+
+/* captions toggle: power shares its row with CC; lit when captions are on */
+.buttons .power { grid-column: auto; }
+.buttons [data-act="captions"].on, .hud [data-act="captions"].on { color: #fff; box-shadow: 0 3px 0 #0b0a09, inset 0 0 0 2px var(--phosphor); }
+body.cc-on .lowerthird { bottom: auto; top: 9%; }  /* keep the banner off YouTube's captions */
