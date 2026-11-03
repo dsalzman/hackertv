@@ -29,6 +29,8 @@ const state = {
   clockOffset: 0,           // server time - local time (s)
   digits: "",
   digitTimer: 0,
+  theater: false,
+  theaterFromFs: false,     // theater was switched on by entering fullscreen
 };
 
 const now = () => Date.now() / 1000 + state.clockOffset;
@@ -171,6 +173,7 @@ function applyFilter() {
   const f = FILTERS[state.filter];
   $("screen").className = `screen filter-${f.id}`;
   $("fxName").textContent = `PICTURE: ${f.name}`;
+  $("hudFx").textContent = f.name;
   $("knobFx").style.setProperty("--rot", `${state.filter * 70 - 105}deg`);
   store.set("hntv.filter", f.id);
 }
@@ -191,6 +194,7 @@ async function tune(idx, { quiet = false } = {}) {
   store.set("hntv.ch", chMeta().id);
   const meta = chMeta();
   $("led").textContent = pad2(meta.num);
+  $("hudCh").textContent = pad2(meta.num);
   $("knobCh").style.setProperty("--rot", `${(idx / n) * 300 - 150}deg`);
   if (!state.powered) return;
   if (!quiet) noise.burst(500);
@@ -378,6 +382,58 @@ async function openGuide() {
 function closeGuide() { $("guide").hidden = true; }
 const toggleGuide = () => ($("guide").hidden ? openGuide() : closeGuide());
 
+// ---------- theater / fullscreen ----------
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+
+function setTheater(on) {
+  state.theater = on;
+  document.body.classList.toggle("theater", on);
+  if (!on) {
+    state.theaterFromFs = false;
+    if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+  pokeHud();
+}
+
+async function toggleFullscreen() {
+  if (fsElement()) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    return;
+  }
+  // Fullscreen = theater layout + browser fullscreen on the whole page, so the guide still works.
+  if (!state.theater) { setTheater(true); state.theaterFromFs = true; }
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return; // e.g. iPhone Safari: theater mode is the best we can do
+  try {
+    await req.call(el, { navigationUI: "hide" });
+    await screen.orientation?.lock?.("landscape");
+  } catch {}
+}
+
+function onFullscreenChange() {
+  if (!fsElement() && state.theaterFromFs) setTheater(false);
+}
+document.addEventListener("fullscreenchange", onFullscreenChange);
+document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+
+// Floating controls: visible while the pointer moves, hidden (with the cursor) when idle.
+let hudTimer = 0;
+function pokeHud() {
+  const hud = $("hud");
+  if (!state.theater) { hud.classList.remove("show"); document.body.classList.remove("idle"); return; }
+  hud.classList.add("show");
+  document.body.classList.remove("idle");
+  clearTimeout(hudTimer);
+  hudTimer = setTimeout(() => {
+    if (hud.matches(":hover")) return pokeHud();
+    hud.classList.remove("show");
+    document.body.classList.add("idle");
+  }, 2500);
+}
+["mousemove", "touchstart", "keydown"].forEach((ev) => document.addEventListener(ev, () => state.theater && pokeHud(), { passive: true }));
+$("tube").addEventListener("dblclick", () => state.powered && toggleFullscreen());
+
 // ---------- input ----------
 function enterDigit(d) {
   if (!state.powered) return;
@@ -403,6 +459,8 @@ const actions = {
   filter: () => { state.filter = (state.filter + 1) % FILTERS.length; applyFilter(); state.powered && flashOSD(FILTERS[state.filter].name, 1500); },
   mute: () => { state.muted = !state.muted; applyMute(); },
   power: () => power(),
+  theater: () => setTheater(!state.theater),
+  fullscreen: () => toggleFullscreen(),
   info: () => state.powered && state.slot && showLowerThird(chMeta(), state.slot),
 };
 
@@ -422,11 +480,15 @@ $("guide").addEventListener("click", (e) => { if (e.target.id === "guide") close
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
-  if (k === "Escape") return closeGuide();
+  if (k === "Escape") {
+    if (!$("guide").hidden) return closeGuide();
+    if (state.theater && !fsElement()) return setTheater(false);
+    return;
+  }
   if (/^[0-9]$/.test(k)) return enterDigit(k);
   if (k === "Enter" && state.digits) return commitDigits();
   const map = { ArrowUp: "chup", ArrowDown: "chdown", PageUp: "chup", PageDown: "chdown",
-                g: "guide", f: "filter", m: "mute", p: "power", i: "info" };
+                g: "guide", f: "filter", m: "mute", p: "power", i: "info", t: "theater" };
   const act = map[k] || map[k.toLowerCase()];
   if (act) { e.preventDefault(); actions[act](); }
 });

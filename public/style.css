@@ -350,3 +350,37 @@ kbd { font-family: var(--vt); font-size: 15px; padding: 0 5px; margin: 0 2px; bo
 .credits .discuss:hover { text-decoration: underline; }
 .credits .discuss { display: inline-block; margin-bottom: 8px; color: var(--hn); font-weight: 600; text-decoration: none; }
 .credits .discuss:hover { text-decoration: underline; }
+
+/* ---------- theater / fullscreen ---------- */
+.hud { display: none; }
+body.theater { background: #050505; overflow: hidden; }
+body.theater .masthead, body.theater .info, body.theater .credits, body.theater .feet, body.theater .panel { display: none; }
+body.theater .room { max-width: none; height: 100vh; height: 100dvh; padding: 12px; justify-content: center; }
+body.theater .cabinet { display: block; padding: 0; background: none; box-shadow: none; }
+body.theater .bezel { width: fit-content; margin: 0 auto; padding: 8px; border-radius: 14px; background: #0c0c0b; }
+body.theater .screen {
+  aspect-ratio: 16 / 9;
+  width: min(calc(100vw - 40px), calc((100dvh - 40px) * 16 / 9));
+  border-radius: 2.2% / 4%;
+}
+body.theater.idle, body.theater.idle .tube { cursor: none; }
+
+body.theater .hud {
+  position: fixed; left: 50%; bottom: 18px; z-index: 40;
+  display: flex; align-items: center; gap: 6px; padding: 8px;
+  transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+  transition: opacity .25s, transform .25s;
+  background: rgba(20,19,18,.88); border: 1px solid rgba(255,255,255,.1); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.6); backdrop-filter: blur(6px);
+  max-width: calc(100vw - 24px); flex-wrap: wrap; justify-content: center;
+}
+body.theater .hud.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.hud button {
+  border: 0; border-radius: 6px; padding: 6px 10px 5px;
+  background: linear-gradient(180deg, #4a4643, #2f2c2a); color: #e8dcc6;
+  font-family: var(--vt); font-size: 18px; letter-spacing: 1px;
+}
+.hud button:hover { background: linear-gradient(180deg, #5a5552, #3a3734); }
+.hud .hud-exit { background: linear-gradient(180deg, #b34a12, #7a2f08); color: #fff; }
+.hud-ch { font-family: var(--vt); font-size: 26px; color: var(--led); min-width: 2ch; text-align: center; text-shadow: 0 0 8px rgba(255,59,47,.7); }
+.buttons .power { grid-column: span 2; }
