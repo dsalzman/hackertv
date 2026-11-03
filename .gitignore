@@ -1,3 +1,6 @@
 data/youtube_meta.jsonl
 .env
 .DS_Store
+data/hn/pending.jsonl
+data/hn/pending.jsonl.meta
+__pycache__/

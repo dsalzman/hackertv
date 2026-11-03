@@ -14,8 +14,9 @@ const store = {
 };
 
 const state = {
-  lineup: null,
-  data: new Map(),          // channel id -> channel json
+  editions: [],             // all weekly editions in lineup.json, by start time
+  lineup: null,             // the edition on air now
+  data: new Map(),          // "<edition path>/<channel id>" -> channel json
   idx: 0,                   // index into lineup.channels
   lastIdx: 0,
   powered: false,
@@ -51,12 +52,55 @@ async function syncClock() {
 }
 
 // ---------- data ----------
-async function loadChannel(meta) {
-  if (state.data.has(meta.id)) return state.data.get(meta.id);
-  const r = await fetch(`data/ch/${meta.id}.json`);
+// The lineup holds weekly "editions". `state.lineup` is the edition on air now;
+// every viewer switches to the next one at the same instant (Monday 00:00 UTC).
+const dataKey = (meta, ed) => `${ed.path ?? "v1"}/${meta.id}`;
+const getData = (meta, ed = state.lineup) => state.data.get(dataKey(meta, ed));
+
+async function loadChannel(meta, ed = state.lineup) {
+  const key = dataKey(meta, ed);
+  if (state.data.has(key)) return state.data.get(key);
+  const r = await fetch(ed.path ? `data/${ed.path}/ch/${meta.id}.json` : `data/ch/${meta.id}.json`);
   const ch = await r.json();
-  state.data.set(meta.id, ch);
+  ch.from = ed.from;
+  state.data.set(key, ch);
   return ch;
+}
+
+function parseLineup(json) {
+  // v1 (single schedule) is treated as one edition starting at the epoch
+  const eds = json.editions ?? [{ from: Date.UTC(2026, 0, 1) / 1000, path: null, ...json }];
+  return eds.slice().sort((a, b) => a.from - b.from);
+}
+
+function editionAt(t) {
+  let ed = state.editions[0];
+  for (const e of state.editions) if (e.from <= t) ed = e;
+  return ed;
+}
+
+async function refreshLineup() {
+  try {
+    const r = await fetch("data/lineup.json", { cache: "no-store" });
+    state.editions = parseLineup(await r.json());
+  } catch {}
+}
+
+/** Called every second: hop to the new edition when its start time arrives. */
+async function checkEdition() {
+  const ed = editionAt(now());
+  if (!ed || ed === state.lineup || (ed.path === state.lineup.path && ed.from === state.lineup.from)) return;
+  const id = chMeta()?.id;
+  state.lineup = ed;
+  const i = ed.channels.findIndex((c) => c.id === id);
+  state.idx = i >= 0 ? i : 0;
+  state.lastIdx = state.idx;
+  $("estNotice").hidden = !ed.estimated;
+  if (state.powered) {
+    flashOSD("NEW WEEK ON HNTV", 4000);
+    await tune(state.idx, { quiet: true });
+    noise.burst(600);
+  }
 }
 
 // ---------- YouTube player ----------
@@ -192,6 +236,7 @@ async function tune(idx, { quiet = false } = {}) {
   if (idx !== state.idx) state.lastIdx = state.idx;
   state.idx = idx;
   store.set("hntv.ch", chMeta().id);
+  if (state.powered) presence.changed();
   const meta = chMeta();
   $("led").textContent = pad2(meta.num);
   $("hudCh").textContent = pad2(meta.num);
@@ -209,7 +254,7 @@ async function tune(idx, { quiet = false } = {}) {
 async function sync(fromTune = false) {
   if (!state.powered) return;
   const meta = chMeta();
-  const ch = state.data.get(meta.id);
+  const ch = getData(meta);
   if (!ch) return;
   const player = await state.playerReady;
 
@@ -262,7 +307,7 @@ function render() {
   if (!slot || !state.powered) return;
 
   const t = now(), v = slot.video;
-  const ch = state.data.get(meta.id);
+  const ch = getData(meta);
   const ps = state.player?.getPlayerState?.();
 
   if (state.failed) setStandby(true, "SIGNAL LOST", `This program is unavailable. Next up at ${fmtTime(slot.end)}`);
@@ -301,7 +346,9 @@ async function power(on = !state.powered) {
     applyMute();
     await tune(state.idx, { quiet: true });
     noise.burst(300);
+    presence.start();
   } else {
+    presence.stop();
     tube.classList.add("turning-off");
     state.player?.stopVideo?.();
     state.loadedVid = null;
@@ -318,11 +365,15 @@ async function openGuide() {
   const g = $("guide");
   g.hidden = false;
   const grid = $("guideGrid");
-  await Promise.all(state.lineup.channels.map(loadChannel));
   const SPAN = 3 * 3600;
   const t = now();
   const t0 = Math.floor(t / 1800) * 1800;
   const t1 = t0 + SPAN;
+  // Editions on air during the guide window (usually one; two around Monday 00:00 UTC).
+  const segs = state.editions
+    .map((ed, k) => ({ ed, a: Math.max(t0, ed.from), b: Math.min(t1, state.editions[k + 1]?.from ?? Infinity) }))
+    .filter((s) => s.a < s.b);
+  await Promise.all(segs.flatMap(({ ed }) => ed.channels.map((m) => loadChannel(m, ed))));
   const pct = (x) => ((Math.max(t0, Math.min(t1, x)) - t0) / SPAN) * 100;
 
   const frag = document.createDocumentFragment();
@@ -342,7 +393,6 @@ async function openGuide() {
   frag.append(head);
 
   state.lineup.channels.forEach((meta, i) => {
-    const ch = state.data.get(meta.id);
     const row = document.createElement("div");
     row.className = "g-row" + (i === state.idx ? " current" : "");
     const label = document.createElement("button");
@@ -360,16 +410,22 @@ async function openGuide() {
       b.textContent = `Off the air · signs on at ${meta.hours[0] % 12 || 12} PM`;
       track.append(b);
     } else {
-      for (const s of slotsBetween(ch, t0, t1)) {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "g-prog" + (s.start <= t && t < s.end ? " live" : "");
-        b.style.left = `${pct(s.start)}%`;
-        b.style.width = `${pct(s.end) - pct(s.start)}%`;
-        b.title = `${fmtTime(s.start)} ${s.video.t} (${s.video.c})`;
-        b.textContent = s.video.t;
-        b.onclick = () => { closeGuide(); tune(i); };
-        track.append(b);
+      for (const seg of segs) {
+        const m = seg.ed.channels.find((c) => c.id === meta.id);
+        const ch = m && getData(m, seg.ed);
+        if (!ch) continue;
+        for (const s of slotsBetween(ch, seg.a, seg.b)) {
+          const a = Math.max(s.start, seg.a), z = Math.min(s.end, seg.b);
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "g-prog" + (a <= t && t < z ? " live" : "");
+          b.style.left = `${pct(a)}%`;
+          b.style.width = `${pct(z) - pct(a)}%`;
+          b.title = `${fmtTime(a)} ${s.video.t} (${s.video.c})`;
+          b.textContent = s.video.t;
+          b.onclick = () => { closeGuide(); tune(i); };
+          track.append(b);
+        }
       }
     }
     row.append(label, track);
@@ -381,6 +437,60 @@ async function openGuide() {
 }
 function closeGuide() { $("guide").hidden = true; }
 const toggleGuide = () => ($("guide").hidden ? openGuide() : closeGuide());
+
+// ---------- live viewer count ----------
+// Anonymous heartbeat to the Worker's /api/presence while the TV is on and visible.
+// Fails quietly (counter stays hidden), e.g. on a plain local static server.
+const presence = (() => {
+  let id = null;
+  try { id = sessionStorage.getItem("hntv.sid"); } catch {}
+  if (!id) {
+    id = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    try { sessionStorage.setItem("hntv.sid", id); } catch {}
+  }
+  let timer = 0, soon = 0;
+  const fmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
+
+  function show(d) {
+    const ok = d && Number.isFinite(d.total) && d.total > 0;
+    $("viewers").hidden = !ok;
+    $("hudViewers").hidden = !ok;
+    if (!ok) return;
+    $("viewersText").textContent = `${fmt(d.total)} WATCHING · ${fmt(d.channel)} HERE`;
+    $("viewers").title = `${d.total} watching HackerTV right now, ${d.channel} on this channel`;
+    $("hudViewers").textContent = `● ${fmt(d.total)}`;
+    $("hudViewers").title = `${d.total} watching HackerTV, ${d.channel} on this channel`;
+  }
+
+  async function beat() {
+    if (!state.powered || document.hidden || !state.lineup) return;
+    try {
+      const r = await fetch("/api/presence", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ch: chMeta().id }),
+      });
+      if (!r.ok) throw new Error(r.status);
+      show(await r.json());
+    } catch { show(null); }
+  }
+
+  function leave() {
+    try {
+      const body = new Blob([JSON.stringify({ id, leave: true })], { type: "application/json" });
+      navigator.sendBeacon?.("/api/presence", body);
+    } catch {}
+  }
+
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) beat(); });
+  addEventListener("pagehide", leave);
+
+  return {
+    start() { clearInterval(timer); beat(); timer = setInterval(beat, 60_000); },
+    stop() { clearInterval(timer); clearTimeout(soon); leave(); show(null); },
+    // channel flips: report once the viewer settles instead of on every press
+    changed() { clearTimeout(soon); soon = setTimeout(beat, 2_000); },
+  };
+})();
 
 // ---------- theater / fullscreen ----------
 const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
@@ -503,7 +613,8 @@ function tickVhsDate() {
 // ---------- boot ----------
 (async function boot() {
   syncClock();
-  state.lineup = await (await fetch("data/lineup.json")).json();
+  state.editions = parseLineup(await (await fetch("data/lineup.json")).json());
+  state.lineup = editionAt(now());
   $("estNotice").hidden = !state.lineup.estimated;
   const saved = store.get("hntv.ch", "prime");
   state.idx = Math.max(0, state.lineup.channels.findIndex((c) => c.id === saved));
@@ -513,7 +624,8 @@ function tickVhsDate() {
   loadChannel(chMeta());
   createPlayer();
   render();
-  setInterval(() => { sync(); tickVhsDate(); }, 1000);
+  setInterval(async () => { await checkEdition(); sync(); tickVhsDate(); }, 1000);
   setInterval(syncClock, 10 * 60 * 1000);
+  setInterval(refreshLineup, 60 * 60 * 1000); // pick up next week's edition in open tabs
   tickVhsDate();
 })();

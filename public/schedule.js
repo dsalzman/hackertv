@@ -4,7 +4,8 @@
 // Each channel is an endless sequence of "cycles". A cycle plays every video in
 // the channel once, in an order shuffled by a PRNG seeded with (channel id, cycle #).
 
-export const EPOCH = Date.UTC(2026, 0, 1) / 1000; // HackerTV "went on air"
+export const EPOCH = Date.UTC(2026, 0, 1) / 1000; // first edition; each edition sets ch.from
+const startOf = (ch) => ch.from ?? EPOCH;
 
 function hashStr(s) {
   let h = 2166136261 >>> 0;
@@ -24,7 +25,7 @@ function mulberry32(a) {
 const cycleCache = new Map(); // `${id}:${cycle}` -> { order, starts }
 
 function cycleFor(ch, cycle) {
-  const key = `${ch.id}:${cycle}`;
+  const key = `${startOf(ch)}:${ch.id}:${cycle}`;
   let c = cycleCache.get(key);
   if (c) return c;
   const rand = mulberry32(hashStr(ch.id) ^ Math.imul(cycle + 1, 2654435761));
@@ -45,13 +46,13 @@ function cycleFor(ch, cycle) {
 function slotFromIndex(ch, cycle, i) {
   const { order, starts } = cycleFor(ch, cycle);
   const video = ch.videos[order[i]];
-  const start = EPOCH + cycle * ch.total + starts[i];
+  const start = startOf(ch) + cycle * ch.total + starts[i];
   return { video, start, end: start + video.d, cycle, index: i };
 }
 
 /** The program airing on `ch` at unix time `t` (seconds). */
 export function slotAt(ch, t) {
-  const since = t - EPOCH;
+  const since = t - startOf(ch);
   const cycle = Math.floor(since / ch.total);
   const pos = since - cycle * ch.total;
   const { starts } = cycleFor(ch, cycle);

@@ -384,3 +384,14 @@ body.theater .hud.show { opacity: 1; transform: translate(-50%, 0); pointer-even
 .hud .hud-exit { background: linear-gradient(180deg, #b34a12, #7a2f08); color: #fff; }
 .hud-ch { font-family: var(--vt); font-size: 26px; color: var(--led); min-width: 2ch; text-align: center; text-shadow: 0 0 8px rgba(255,59,47,.7); }
 .buttons .power { grid-column: span 2; }
+
+/* ---------- live viewer count ---------- */
+.viewers { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: -6px;
+  font-family: var(--vt); font-size: 14px; letter-spacing: .5px; color: #8f8169; white-space: nowrap; }
+.viewers[hidden], .hud-viewers[hidden] { display: none; }
+.viewers i { width: 6px; height: 6px; border-radius: 50%; background: var(--led);
+  box-shadow: 0 0 6px var(--led); animation: onair 2.4s ease-in-out infinite; }
+.hud-viewers { font-family: var(--vt); font-size: 16px; color: #8f8169; padding: 0 4px; }
+@keyframes onair { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (max-width: 760px) { .viewers { grid-column: span 2; margin-top: -4px; } }
+@media (prefers-reduced-motion: reduce) { .viewers i { animation: none; } }

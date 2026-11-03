@@ -1,0 +1,89 @@
+name: Weekly update
+
+# Saturday 12:00 UTC: pull the week's HN comments, label them, rebuild the channels as an
+# edition that goes live Monday 00:00 UTC, and push (Cloudflare redeploys on push).
+#
+# Claude auth: Workload Identity Federation, no API key. GitHub's OIDC token is exchanged
+# for a short-lived Anthropic token bound to a service account. The IDs below are
+# repository *variables* (Settings -> Secrets and variables -> Actions -> Variables);
+# they're identifiers, not secrets. See README.md.
+on:
+  schedule:
+    - cron: "0 12 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the weekly commit
+  id-token: write   # mint the GitHub OIDC token for Anthropic WIF
+
+concurrency:
+  group: weekly-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: /tmp/anthropic-oidc-jwt
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check federation settings
+        run: |
+          for v in ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_ORGANIZATION_ID ANTHROPIC_SERVICE_ACCOUNT_ID ANTHROPIC_WORKSPACE_ID; do
+            [ -n "${!v}" ] || { echo "::error::repository variable $v is not set (see README.md)"; exit 1; }
+          done
+          [ -z "${ANTHROPIC_API_KEY:-}" ] || { echo "::error::ANTHROPIC_API_KEY is set and would shadow federation"; exit 1; }
+
+      - name: Start OIDC token refresher
+        run: |
+          scripts/gha_oidc_token.sh
+          nohup scripts/gha_oidc_token.sh --loop > /tmp/oidc-refresh.log 2>&1 &
+
+      - name: Collect new HN comments (code filters only)
+        run: python scripts/hn_update.py collect
+
+      - name: Refresh YouTube metadata
+        run: python scripts/fetch_youtube_meta.py --refresh
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+
+      - name: Label mentions with Claude
+        run: |
+          scripts/gha_oidc_token.sh   # fresh, never-exchanged token for this process
+          python scripts/hn_update.py label
+
+      - name: Merge stats and write cards
+        run: |
+          scripts/gha_oidc_token.sh
+          python scripts/make_cards.py
+
+      - name: Build next week's edition
+        run: python scripts/build_channels.py --from next-monday
+
+      - name: Sanity checks
+        run: python scripts/check_build.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "hackertv-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/hn data/videos.jsonl data/fresh.jsonl public/data
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "Weekly update: edition $(date -u -d 'next monday' +%Y-%m-%d)"
+            git push
+          fi

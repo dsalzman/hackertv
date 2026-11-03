@@ -87,6 +87,7 @@
       <aside class="panel">
         <div class="brandplate">HNTV<small>MODEL HN-1986</small></div>
         <div class="led" id="led" aria-live="polite">--</div>
+        <div class="viewers" id="viewers" hidden title="People watching HackerTV right now"><i></i><span id="viewersText"></span></div>
         <div class="knobs">
           <div class="knob" id="knobCh" title="Channel"><i></i></div>
           <div class="knob small" id="knobFx" title="Picture"><i></i></div>
@@ -146,6 +147,7 @@
 <div class="hud" id="hud">
   <button type="button" data-act="chdown" title="Channel down">CH ▼</button>
   <span class="hud-ch" id="hudCh">--</span>
+  <span class="hud-viewers" id="hudViewers" hidden></span>
   <button type="button" data-act="chup" title="Channel up">CH ▲</button>
   <button type="button" data-act="guide">GUIDE</button>
   <button type="button" data-act="filter" id="hudFx">PICTURE</button>
