@@ -346,3 +346,5 @@ kbd { font-family: var(--vt); font-size: 15px; padding: 0 5px; margin: 0 2px; bo
 @media (prefers-reduced-motion: reduce) {
   .fx-grain, .fx-track, .filter-crt .tube, .filter-bw .tube, .filter-vhs .video-wrap { animation: none; }
 }
+.credits .discuss { display: inline-block; margin-bottom: 8px; color: var(--hn); font-weight: 600; text-decoration: none; }
+.credits .discuss:hover { text-decoration: underline; }
