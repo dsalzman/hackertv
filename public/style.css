@@ -395,3 +395,7 @@ body.theater .hud.show { opacity: 1; transform: translate(-50%, 0); pointer-even
 @keyframes onair { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (max-width: 760px) { .viewers { grid-column: span 2; margin-top: -4px; } }
 @media (prefers-reduced-motion: reduce) { .viewers i { animation: none; } }
+
+.credits p { margin: 6px auto 0; max-width: 760px; line-height: 1.5; }
+.credits a { color: #b8a888; }
+.credits a:hover { color: var(--hn); }

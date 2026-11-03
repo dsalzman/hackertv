@@ -616,6 +616,8 @@ function tickVhsDate() {
   state.editions = parseLineup(await (await fetch("data/lineup.json")).json());
   state.lineup = editionAt(now());
   $("estNotice").hidden = !state.lineup.estimated;
+  const built = Math.max(0, ...state.editions.map((e) => e.built || 0));
+  if (built) $("dataUpdated").textContent = ` · updated ${new Date(built * 1000).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
   const saved = store.get("hntv.ch", "prime");
   state.idx = Math.max(0, state.lineup.channels.findIndex((c) => c.id === saved));
   state.lastIdx = state.idx;
