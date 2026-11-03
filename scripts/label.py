@@ -53,9 +53,12 @@ def _batches(items, n):
 
 
 def _run_parallel(fn, batches, workers=4):
-    out = []
+    # Run the first batch alone: with Workload Identity Federation the first request does the
+    # token exchange, and each GitHub OIDC token may be exchanged only once. Concurrent first
+    # requests would all present the same token and all but one would be rejected.
+    out = list(fn(batches[0]) or []) if batches else []
     with ThreadPoolExecutor(workers) as ex:
-        for res in ex.map(fn, batches):
+        for res in ex.map(fn, batches[1:]):
             out.extend(res or [])
     return out
 
