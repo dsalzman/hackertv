@@ -348,8 +348,6 @@ kbd { font-family: var(--vt); font-size: 15px; padding: 0 5px; margin: 0 2px; bo
 }
 .credits .discuss { display: inline-block; margin-bottom: 8px; color: var(--hn); font-weight: 600; text-decoration: none; }
 .credits .discuss:hover { text-decoration: underline; }
-.credits .discuss { display: inline-block; margin-bottom: 8px; color: var(--hn); font-weight: 600; text-decoration: none; }
-.credits .discuss:hover { text-decoration: underline; }
 
 /* ---------- theater / fullscreen ---------- */
 .hud { display: none; }
@@ -399,6 +397,8 @@ body.theater .hud.show { opacity: 1; transform: translate(-50%, 0); pointer-even
 .credits p { margin: 6px auto 0; max-width: 760px; line-height: 1.5; }
 .credits a { color: #b8a888; }
 .credits a:hover { color: var(--hn); }
+.credits .maker { margin: 0 auto 4px; color: #d8c8a8; }
+.credits .maker a { color: #e8d8b8; font-weight: 600; }
 
 /* captions toggle: power shares its row with CC; lit when captions are on */
 .buttons .power { grid-column: auto; }
