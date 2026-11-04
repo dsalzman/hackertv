@@ -113,7 +113,7 @@ the site itself is still served as static assets. Test it locally with `npx wran
   air, a random sample of videos still playable (YouTube oEmbed), the presence API's input validation, and that
   Saturday's weekly update succeeded. A failure opens a `health-check` issue; the next pass closes it.
   Run it yourself with `python3 scripts/health_check.py`.
-- **Security headers** come from `public/_headers` (strict CSP: our code, YouTube, Google Fonts only).
+- **Security headers** come from `public/_headers` (strict CSP: our code, YouTube, Google Fonts, Cloudflare Web Analytics).
 - **Dependabot** (`.github/dependabot.yml`), **CodeQL**, and **secret scanning with push protection** are on.
   Actions are pinned to commit SHAs; Dependabot bumps them.
 - **Weekly Claude review** (a Claude Code scheduled routine): reads the health check, alerts and the week's
