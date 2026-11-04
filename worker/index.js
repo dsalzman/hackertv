@@ -28,8 +28,8 @@ export class Presence {
   async fetch(request) {
     let body;
     try {
-      const text = await request.text();
-      if (text.length > MAX_BODY) return json({ error: "too large" }, 413);
+      const text = await readCapped(request);
+      if (text === null) return json({ error: "too large" }, 413);
       body = JSON.parse(text);
     } catch { return json({ error: "bad json" }, 400); }
     const { id, ch, leave } = body || {};
@@ -48,6 +48,25 @@ export class Presence {
     for (const s of this.sessions.values()) if (s.ch === ch) channel++;
     return json({ total: this.sessions.size, channel });
   }
+}
+
+// Read at most MAX_BODY bytes. content-length can be absent (chunked), so cap the stream itself.
+async function readCapped(request) {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY) { await reader.cancel(); return null; }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(size);
+  let o = 0;
+  for (const c of chunks) { buf.set(c, o); o += c.byteLength; }
+  return new TextDecoder().decode(buf);
 }
 
 function json(obj, status = 200) {
