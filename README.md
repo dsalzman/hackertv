@@ -106,6 +106,20 @@ sends an anonymous random session id about once a minute, and a single Durable O
 last 2.5 minutes, in total and per channel. Nothing is stored and no IPs are kept. Only `/api/*` runs Worker code;
 the site itself is still served as static assets. Test it locally with `npx wrangler dev`.
 
+## Upkeep and security
+
+- **Health check** (`.github/workflows/health-check.yml`, Monday 01:00 UTC): `scripts/health_check.py` checks the
+  live site's security headers, that the deployed lineup matches `main`, every channel file of the edition on
+  air, a random sample of videos still playable (YouTube oEmbed), the presence API's input validation, and that
+  Saturday's weekly update succeeded. A failure opens a `health-check` issue; the next pass closes it.
+  Run it yourself with `python3 scripts/health_check.py`.
+- **Security headers** come from `public/_headers` (strict CSP: our code, YouTube, Google Fonts only).
+- **Dependabot** (`.github/dependabot.yml`), **CodeQL**, and **secret scanning with push protection** are on.
+  Actions are pinned to commit SHAs; Dependabot bumps them.
+- **Weekly Claude review** (a Claude Code scheduled routine): reads the health check, alerts and the week's
+  commits, and opens a pull request or issue if something needs fixing. It never pushes to `main`.
+- Reporting a vulnerability: see `SECURITY.md`.
+
 ## Deploy
 
 Cloudflare Workers Builds deploys on every push to `main` with `npx wrangler deploy` (`wrangler.jsonc`): static assets from `public/` plus the presence API.

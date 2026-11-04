@@ -10,6 +10,7 @@ const WINDOW_MS = 150_000;   // a viewer counts if seen in the last 2.5 min (hea
 const MAX_SESSIONS = 100_000;
 const ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const CH_RE = /^[a-z0-9-]{1,40}$/;
+const MAX_BODY = 512;        // a heartbeat is ~80 bytes
 
 export class Presence {
   constructor(ctx) {
@@ -26,7 +27,11 @@ export class Presence {
 
   async fetch(request) {
     let body;
-    try { body = await request.json(); } catch { return json({ error: "bad json" }, 400); }
+    try {
+      const text = await request.text();
+      if (text.length > MAX_BODY) return json({ error: "too large" }, 413);
+      body = JSON.parse(text);
+    } catch { return json({ error: "bad json" }, 400); }
     const { id, ch, leave } = body || {};
     if (typeof id !== "string" || !ID_RE.test(id)) return json({ error: "bad id" }, 400);
     const now = Date.now();
@@ -48,7 +53,12 @@ export class Presence {
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    },
   });
 }
 
@@ -57,6 +67,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/api/presence") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      // Reject oversized bodies before they reach the Durable Object.
+      if (Number(request.headers.get("content-length") || 0) > MAX_BODY) return json({ error: "too large" }, 413);
       const stub = env.PRESENCE.get(env.PRESENCE.idFromName("global"));
       return stub.fetch(request);
     }

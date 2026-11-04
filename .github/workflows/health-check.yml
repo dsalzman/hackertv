@@ -1,0 +1,75 @@
+name: Health check
+
+# Monday 01:00 UTC, an hour after each new edition goes live. Checks the live site (headers,
+# schedule, channel files, video availability, presence API) and that last Saturday's weekly
+# update succeeded. On failure it opens an issue labeled "health-check" (or comments on the
+# open one); on success it closes it.
+on:
+  schedule:
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [scripts/health_check.py, .github/workflows/health-check.yml]
+
+permissions:
+  contents: read
+  issues: write    # open/close the health-check issue
+  actions: read    # read the weekly update's last run
+
+concurrency:
+  group: health-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEALTH_REPORT: /tmp/health.md
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Wait for Cloudflare to deploy this commit
+        if: github.event_name == 'push'
+        run: sleep 180
+
+      - name: Check the live site
+        id: site
+        continue-on-error: true
+        run: python3 scripts/health_check.py
+
+      - name: Check last weekly update
+        id: weekly
+        continue-on-error: true
+        run: |
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow weekly-update.yml --limit 1 --json conclusion,createdAt,url --jq '.[0]')
+          echo "last weekly update: $run"
+          [ -n "$run" ] || { echo "| ❌ | weekly update | never ran |" >> "$HEALTH_REPORT"; exit 1; }
+          concl=$(jq -r .conclusion <<<"$run"); url=$(jq -r .url <<<"$run")
+          age=$(( ( $(date +%s) - $(date -d "$(jq -r .createdAt <<<"$run")" +%s) ) / 86400 ))
+          if [ "$concl" != success ] || [ "$age" -gt 8 ]; then
+            echo "| ❌ | weekly update | last run $concl, $age days ago: $url |" | tee -a "$HEALTH_REPORT" "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "| ✅ | weekly update | $concl, $age days ago |" | tee -a "$HEALTH_REPORT" "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update issue
+        if: steps.site.outcome == 'failure' || steps.weekly.outcome == 'failure'
+        run: |
+          gh label create health-check -R "$GITHUB_REPOSITORY" --color B60205 --description "Automated health check" 2>/dev/null || true
+          body="$(printf 'Health check failed on %s.\n\n%s\n\nRun: %s/%s/actions/runs/%s\n' "$(date -u +%F)" "$(cat "$HEALTH_REPORT")" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")"
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --label health-check --state open --json number --jq '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" -R "$GITHUB_REPOSITORY" --body "$body"
+          else gh issue create -R "$GITHUB_REPOSITORY" --title "Health check failing" --label health-check --body "$body"; fi
+          exit 1
+
+      - name: Close resolved issue
+        if: steps.site.outcome == 'success' && steps.weekly.outcome == 'success'
+        run: |
+          for n in $(gh issue list -R "$GITHUB_REPOSITORY" --label health-check --state open --json number --jq '.[].number'); do
+            gh issue close "$n" -R "$GITHUB_REPOSITORY" --comment "Health check passing again on $(date -u +%F)."
+          done

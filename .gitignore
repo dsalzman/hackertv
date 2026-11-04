@@ -4,3 +4,5 @@ data/youtube_meta.jsonl
 data/hn/pending.jsonl
 data/hn/pending.jsonl.meta
 __pycache__/
+.wrangler/
+node_modules/
